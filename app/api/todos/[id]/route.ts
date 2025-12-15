@@ -1,95 +1,98 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs/promises';
-import path from 'path';
-import { TodoList, Todo } from '@/types';
-
-const dataFilePath = path.join(process.cwd(), 'data', 'todos.json');
-
-async function readLists(): Promise<TodoList[]> {
-    try {
-        const data = await fs.readFile(dataFilePath, 'utf-8');
-        const parsed = JSON.parse(data);
-        return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-        return [];
-    }
-}
-
-async function writeLists(lists: TodoList[]): Promise<void> {
-    await fs.writeFile(dataFilePath, JSON.stringify(lists, null, 2), 'utf-8');
-}
+import connectDB from '@/lib/db';
+import TodoList from '@/models/TodoList';
+import { Todo } from '@/types';
 
 export async function GET(
     request: Request,
     context: { params: Promise<{ id: string }> }
 ) {
-    const { id } = await context.params;
-    const lists = await readLists();
-    const list = lists.find((l) => l.id === parseInt(id));
+    try {
+        const { id } = await context.params;
+        await connectDB();
+        const list = await TodoList.findOne({ id: parseInt(id) });
 
-    if (!list) {
-        return NextResponse.json({ error: 'List not found' }, { status: 404 });
+        if (!list) {
+            return NextResponse.json({ error: 'List not found' }, { status: 404 });
+        }
+
+        return NextResponse.json(list);
+    } catch (error) {
+        return NextResponse.json({ error: 'Failed to fetch list' }, { status: 500 });
     }
-
-    return NextResponse.json(list);
 }
 
 export async function PUT(
     request: Request,
     context: { params: Promise<{ id: string }> }
 ) {
-    const { id } = await context.params;
-    const updatedList = await request.json();
-    const lists = await readLists();
-    const index = lists.findIndex((l) => l.id === parseInt(id));
+    try {
+        const { id } = await context.params;
+        const updatedList = await request.json();
+        await connectDB();
 
-    if (index === -1) {
-        return NextResponse.json({ error: 'List not found' }, { status: 404 });
+        const list = await TodoList.findOneAndUpdate(
+            { id: parseInt(id) },
+            { $set: { todos: updatedList.todos, name: updatedList.name } },
+            { new: true }
+        );
+
+        if (!list) {
+            return NextResponse.json({ error: 'List not found' }, { status: 404 });
+        }
+
+        return NextResponse.json(list);
+    } catch (error) {
+        return NextResponse.json({ error: 'Failed to update list' }, { status: 500 });
     }
-
-    lists[index] = updatedList;
-    await writeLists(lists);
-
-    return NextResponse.json(lists[index]);
 }
 
 export async function DELETE(
     request: Request,
     context: { params: Promise<{ id: string }> }
 ) {
-    const { id } = await context.params;
-    const lists = await readLists();
-    const filtered = lists.filter((l) => l.id !== parseInt(id));
+    try {
+        const { id } = await context.params;
+        await connectDB();
+        const result = await TodoList.findOneAndDelete({ id: parseInt(id) });
 
-    if (lists.length === filtered.length) {
-        return NextResponse.json({ error: 'List not found' }, { status: 404 });
+        if (!result) {
+            return NextResponse.json({ error: 'List not found' }, { status: 404 });
+        }
+
+        return new Response(null, { status: 204 });
+    } catch (error) {
+        return NextResponse.json({ error: 'Failed to delete list' }, { status: 500 });
     }
-
-    await writeLists(filtered);
-    return new Response(null, { status: 204 });
 }
 
 export async function POST(
     request: Request,
     context: { params: Promise<{ id: string }> }
 ) {
-    const { id } = await context.params;
-    const { text } = await request.json();
-    const lists = await readLists();
-    const index = lists.findIndex((l) => l.id === parseInt(id));
+    try {
+        const { id } = await context.params;
+        const { text } = await request.json();
+        await connectDB();
 
-    if (index === -1) {
-        return NextResponse.json({ error: 'List not found' }, { status: 404 });
+        const newTodo: Todo = {
+            id: Date.now(),
+            text,
+            completed: false,
+        };
+
+        const list = await TodoList.findOneAndUpdate(
+            { id: parseInt(id) },
+            { $push: { todos: newTodo } },
+            { new: true }
+        );
+
+        if (!list) {
+            return NextResponse.json({ error: 'List not found' }, { status: 404 });
+        }
+
+        return NextResponse.json(list, { status: 201 });
+    } catch (error) {
+        return NextResponse.json({ error: 'Failed to add todo' }, { status: 500 });
     }
-
-    const newTodo: Todo = {
-        id: Date.now(),
-        text,
-        completed: false,
-    };
-
-    lists[index].todos.push(newTodo);
-    await writeLists(lists);
-
-    return NextResponse.json(lists[index]);
 }
